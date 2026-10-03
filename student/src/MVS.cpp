@@ -3,6 +3,7 @@
 #include <MvCameraControl.h>
 
 #include <cstring>
+#include <vector>
 
 #include <opencv2/imgproc.hpp>
 
@@ -11,7 +12,7 @@ namespace {
 struct SetParam {
     int width = 1440;
     int height =1080;
-    float exp_time = 10000.0F;
+    float exp_time = 50000.0F;
     float gain = 0.0F;
     float gamma = 1.0F;
 };
@@ -133,16 +134,25 @@ bool getframe(cv::Mat& pic) {
     if (MV_CC_GetImageBuffer(c.handle, &frame, 400) != MV_OK) return false;
     
 
-    cv::Mat raw(
-        static_cast<int>(frame.stFrameInfo.nHeight),
-        static_cast<int>(frame.stFrameInfo.nWidth),
-        CV_8UC1,
-        frame.pBufAddr);
+    const int width = static_cast<int>(frame.stFrameInfo.nWidth);
+    const int height = static_cast<int>(frame.stFrameInfo.nHeight);
+    std::vector<unsigned char> bgr_buffer(
+        static_cast<std::size_t>(width) * static_cast<std::size_t>(height) * 3U);
 
+    MV_CC_PIXEL_CONVERT_PARAM_EX convert{};
+    convert.nWidth = frame.stFrameInfo.nWidth;
+    convert.nHeight = frame.stFrameInfo.nHeight;
+    convert.enSrcPixelType = frame.stFrameInfo.enPixelType;
+    convert.pSrcData = frame.pBufAddr;
+    convert.nSrcDataLen = frame.stFrameInfo.nFrameLen;
+    convert.enDstPixelType = PixelType_Gvsp_BGR8_Packed;
+    convert.pDstBuffer = bgr_buffer.data();
+    convert.nDstBufferSize = static_cast<unsigned int>(bgr_buffer.size());
 
-    
-    if (!raw.empty()) {
-        cv::cvtColor(raw, pic, cv::COLOR_BayerRG2BGR);
+    if (MV_CC_ConvertPixelTypeEx(c.handle, &convert) == MV_OK &&
+        convert.nDstLen >= bgr_buffer.size()) {
+        cv::Mat converted(height, width, CV_8UC3, bgr_buffer.data());
+        converted.copyTo(pic);
         cv::flip(pic, pic, -1);
     }
 
