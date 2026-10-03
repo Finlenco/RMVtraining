@@ -54,12 +54,16 @@ target_include_directories(training_core
         student/include
         serialPort/include
         web_debug/include
+        web_debug/3rdparty
         ${MVS_INCLUDE_DIR}
         ${OpenCV_INCLUDE_DIRS}
 )
 target_link_libraries(training_core PUBLIC serialPort algorithm_support Eigen3::Eigen ${OpenCV_LIBS} ${MVS_LIBRARY})
 target_compile_definitions(training_core PRIVATE
     RMVTRAINING_MODEL_DIR="${CMAKE_CURRENT_SOURCE_DIR}/student/model")
+if(ENABLE_WEB_DEBUG)
+    target_compile_definitions(training_core PRIVATE WEB_DEBUG)
+endif()
 
 add_executable(rmv_training main.cpp)
 target_include_directories(rmv_training PRIVATE web_debug/include)
