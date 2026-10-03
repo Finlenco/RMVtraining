@@ -1,0 +1,44 @@
+%YAML:1.0
+---
+
+calibrated: 1
+
+# 标定图像分辨率，单位为 pixel
+image_width: 1440
+image_height: 1080
+
+# 相机内参矩阵 K
+camera_matrix: !!opencv-matrix
+  rows: 3
+  cols: 3
+  dt: d
+  data: [ 1718.9, 0., 781.7247,
+          0., 1719.3, 585.5352,
+          0., 0., 1 ]
+
+# 畸变顺序必须与所选标定模型一致，并在报告中说明。
+# 默认模板按 OpenCV pinhole 模型保留 [k1, k2, p1, p2, k3] 五个位置。
+distortion_coefficients: !!opencv-matrix
+  rows: 1
+  cols: 5
+  dt: d
+  data: [-0.0612, 0.0145, -0.0013, 0.0015, 0.2074]
+
+# 从相机坐标系变换到云台坐标系的旋转矩阵 R_gimbal_camera。
+rotation_camera_to_gimbal: !!opencv-matrix
+  rows: 3
+  cols: 3
+  dt: d
+  data: [ 0., 0., 1.,
+          -1., 0., 0.,
+          0., -1., 0. ]
+
+# 相机原点在云台坐标系中的位置 t_gimbal_camera，
+# 即从云台原点指向相机原点的平移向量，单位为 m。
+translation_camera_to_gimbal: !!opencv-matrix
+  rows: 3
+  cols: 1
+  dt: d
+  data: [ 0.06711, 0., 0.0515 ]
+
+mean_reprojection_error_px: 0.1765

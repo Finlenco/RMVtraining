@@ -1,0 +1,157 @@
+#  RMVtraining 随记
+
+
+## 相机标定
+
+旋转矩阵和 畸变参数通过Matlab工具实现，然后从相机坐标系到云台坐标系的参数通过询问学长得到。
+
+## 采集画面
+
+我单独创建MVS.cpp文件来实现调用MVS库的相机采集功能，相机类型只接受MV_USB_DEVICE 。
+
+主要的相机参数通过struct MvsCamera维护
+
+由于这次的实现主要是student文件夹。是简单的实现，所以我没有另外写一个外部文件存放param，初始化就直接写在文件里面了
+
+BGR格式转换：用 cv::cvtColor(raw, pic, cv::COLOR_BayerRG2BGR)实现。
+
+## 装甲板识别
+### 图像初始化
+首先根据敌方颜色分类，然后进行图像预处理：灰度，mask和先膨胀后腐蚀。
+
+### 灯条框定和匹配
+灯条框定后通过 cv::RotatedRect 来保存待匹配的数据
+
+首先从左到有两两匹配，然后根据两灯条的长度之比、两灯条中心的距离、配对出装甲板的倾斜角度来筛选掉条件不满足的结果，得到形状符合装甲板特征的灯条配对
+### 数字分类器
+使用 chenjunnn/rm_auto_aim 训练好的模型进行测试，`confidence`的值是由数字分类器 `NumberClassifier` 计算的。
+
+## PNP解算
+主要使用OPENCV的solvePnP()，projectPoints()，Rodrigues()实现
+
+## EKF解算
+底层使用项目提供的通用EKF框架，然后为了适配我另外的代码，写了EkfTracker.cpp 负责：
+\[
+K = PH^T\left(HPH^T + R\right)^{-1}
+\]
+
+\[
+X = X + K\left(Z - h(X)\right)
+\]
+
+状态变量x
+
+\[ X = \begin{bmatrix} x_c \\ v_x \\ y_c \\ v_y \\ z \\ v_z \\ \psi \\ \omega \\ r \end{bmatrix} \]
+
+- 匀速模型 f
+- 雅可比矩阵
+- 过程噪声和观测噪声
+
+target_yaw = 当前云台yaw+视觉坐标系中的目标方向
+
+update流程
+
+```yaml
+视觉检测
+   │
+   ▼
+ArmorPose
+(x,y,z,yaw,id)
+   │
+   ▼
+合法性检查
+   │
+   ▼
+数据关联
+   │
+   ├── 没有 EKF ──────► 初始化 EKF
+   │
+   ├── 正常匹配 ──────► EKF Update
+   │
+   ├── 装甲板跳变 ────► Jump Handle
+   │
+   └── 没匹配 ────────► Missed Frame
+                          │
+                          ▼
+                     超过10帧reset
+
+正常匹配
+   │
+   ▼
+EKF Predict
+   │
+   ▼
+EKF Update
+   │
+   ▼
+9维状态
+[x,vx,y,vy,z,vz,yaw,ω,r]
+   │
+   ▼
+预测未来 lead_time
+   │
+   ▼
+未来装甲板位置
+   │
+   ├── target yaw
+   ├── target pitch
+   ├── yaw velocity
+   └── pitch velocity
+   │
+   ▼
+PredictionResult
+```
+
+车体中心按匀速运动，朝向按匀角速度变化。观测模型把车体中心和朝向换算成装甲板位置：xa = xc - r * cos(yaw)  ，ya = yc - r * sin(yaw)  ，za = za
+
+## 附录
+
+参考项目 chenjunnn/rm_auto_aim
+
+用来速查的：
+
+KalmanFilter参数
+
+| 参数                | 含义                                     |
+| ------------------- | ---------------------------------------- |
+| `f`                 | 过程模型，根据旧状态预测新状态           |
+| `h`                 | 观测模型，根据状态计算相机应该观测到的量 |
+| `j_f`               | `f` 对状态的雅可比矩阵                   |
+| `j_h`               | `h` 对状态的雅可比矩阵                   |
+| `u_q`               | 过程噪声协方差 `Q`                       |
+| `u_r`               | 观测噪声协方差 `R`                       |
+| `nomolize_residual` | 观测残差处理函数，例如角度归一化         |
+| `P0`                | 初始状态协方差                           |
+| `x0`                | 初始状态                                 |
+
+```cpp
+typedef struct _MV_CC_PIXEL_CONVERT_PARAM_EX_
+{
+    unsigned int            nWidth;                                 ///< [IN]  \~chinese 图像宽                 \~english Width
+    unsigned int            nHeight;                                ///< [IN]  \~chinese 图像高                 \~english Height
+
+    enum MvGvspPixelType    enSrcPixelType;                         ///< [IN]  \~chinese 源像素格式             \~english Source pixel format
+    unsigned char*          pSrcData;                               ///< [IN]  \~chinese 输入数据缓存           \~english Input data buffer
+    unsigned int            nSrcDataLen;                            ///< [IN]  \~chinese 输入数据长度           \~english Input data length
+
+    enum MvGvspPixelType    enDstPixelType;                         ///< [IN]  \~chinese 目标像素格式           \~english Destination pixel format
+    unsigned char*          pDstBuffer;                             ///< [OUT] \~chinese 输出数据缓存           \~english Output data buffer
+    unsigned int            nDstLen;                                ///< [OUT] \~chinese 输出数据长度           \~english Output data length
+    unsigned int            nDstBufferSize;                         ///< [IN]  \~chinese 提供的输出缓冲区大小   \~english Provided output buffer size
+
+    unsigned int            nRes[4];                                ///<       \~chinese 预留                   \~english Reserved
+
+}MV_CC_PIXEL_CONVERT_PARAM_EX;
+```
+
+| 数据                                | 单位       |
+| ----------------------------------- | ---------- |
+| 装甲板尺寸文件中的宽高              | mm         |
+| PnP、外参平移、位置、半径、速度模型 | m、m/s     |
+| 通信字段 `coo_x`、`coo_y`           | mm         |
+| 距离                                | m          |
+| yaw、pitch、roll 和角速度           | rad、rad/s |
+| `latency`                           | ms         |
+| `prediction_bias_s`                 | s          |
+| 时间戳参数                          | s          |
+

@@ -18,6 +18,7 @@
 #include <string>
 #include <thread>
 #include <vector>
+#include "MVS.hpp"
 
 // 这个文件有意保留 aimbot_26/main.cpp 的组织方式：
 // main 负责初始化，ReadFunction 负责收串口，OperationFunction 负责整条视觉流水线。
@@ -464,6 +465,7 @@ void *OperationFunction(void *arg) {
         writeFrame(*serialPort, translator);
     }
 
+    MVS::shutdown();
     STOP_WEB_SERVER();
     return nullptr;
 }

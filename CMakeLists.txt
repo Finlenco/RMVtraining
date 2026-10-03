@@ -9,8 +9,20 @@ option(ENABLE_WEB_DEBUG "Build the scalar Web Debug dashboard" ON)
 option(BUILD_TESTING "Build the starter-project tests" ON)
 
 find_package(Eigen3 REQUIRED)
-find_package(OpenCV 4 REQUIRED COMPONENTS core)
+find_package(OpenCV 4 REQUIRED COMPONENTS core imgproc calib3d dnn)
 find_package(Threads REQUIRED)
+
+# HIKROBOT MVS SDK
+set(MVS_ROOT "/opt/MVS" CACHE PATH "HIKROBOT MVS SDK root")
+find_path(MVS_INCLUDE_DIR MvCameraControl.h
+    PATHS "${MVS_ROOT}/include"
+    NO_DEFAULT_PATH)
+find_library(MVS_LIBRARY NAMES MvCameraControl
+    PATHS "${MVS_ROOT}/lib/64"
+    NO_DEFAULT_PATH)
+if(NOT MVS_INCLUDE_DIR OR NOT MVS_LIBRARY)
+    message(FATAL_ERROR "HIKROBOT MVS SDK not found. Set MVS_ROOT to its installation directory.")
+endif()
 
 add_subdirectory(serialPort)
 if(ENABLE_WEB_DEBUG)
@@ -28,15 +40,24 @@ add_library(training_core STATIC
     src/AppSupport.cpp
     src/AutoAimTypes.cpp
     student/src/StudentTasks.cpp
+    student/src/MVS.cpp
+    student/src/ArmorDetector.cpp
+    student/src/NumberClassifier.cpp
+    student/src/ArmorSolver.cpp
+    student/src/KalmanFilter.cpp
 )
 target_include_directories(training_core
     PUBLIC
         include
+        armor/include
         student/include
         serialPort/include
+        ${MVS_INCLUDE_DIR}
         ${OpenCV_INCLUDE_DIRS}
 )
-target_link_libraries(training_core PUBLIC serialPort ${OpenCV_LIBS})
+target_link_libraries(training_core PUBLIC serialPort algorithm_support Eigen3::Eigen ${OpenCV_LIBS} ${MVS_LIBRARY})
+target_compile_definitions(training_core PRIVATE
+    RMVTRAINING_MODEL_DIR="${CMAKE_CURRENT_SOURCE_DIR}/student/model")
 
 add_executable(rmv_training main.cpp)
 target_include_directories(rmv_training PRIVATE web_debug/include)
