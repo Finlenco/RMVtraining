@@ -147,6 +147,12 @@
 
         main { padding: 18px 20px 30px; }
 
+        .image-panel { margin-bottom: 14px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); overflow: hidden; }
+        .image-panel header { padding: 10px 12px; border-bottom: 1px solid var(--line); }
+        .image-panel h2 { margin: 0; font-size: 14px; }
+        .image-panel p { margin: 4px 0 0; color: var(--muted); font-size: 12px; }
+        #processedImage { display: block; width: 100%; max-height: 720px; object-fit: contain; background: #0a0d0f; }
+
         #charts {
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(min(100%, 340px), 1fr));
@@ -289,6 +295,13 @@
     </header>
 
     <main>
+        <section class="image-panel">
+            <header>
+                <h2>取流与识别处理图</h2>
+                <p>四格图：原始 BGR、亮度阈值、颜色阈值、灯条与最终识别结果。</p>
+            </header>
+            <img id="processedImage" alt="取流与识别处理诊断图" src="/image">
+        </section>
         <section id="charts" aria-live="polite"></section>
     </main>
 
@@ -304,6 +317,7 @@
             const clearButton = document.getElementById("clearButton");
             const exportButton = document.getElementById("exportButton");
             const timeWindow = document.getElementById("timeWindow");
+            const processedImage = document.getElementById("processedImage");
 
             // 每个指标名称对应一张图表，并在浏览器内维护自己的历史记录。
             const charts = new Map();
@@ -605,6 +619,10 @@
                 for (const chart of charts.values()) chart.dirty = true;
                 renderAll(true);
             });
+
+            window.setInterval(() => {
+                processedImage.src = `/image?t=${Date.now()}`;
+            }, 500);
 
             function connect() {
                 setConnectionState("connecting", "正在连接");

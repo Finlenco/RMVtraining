@@ -14,6 +14,7 @@
 #include <memory>
 #include <mutex>
 #include <thread>
+#include <vector>
 
 #include "json.hpp"
 
@@ -41,6 +42,7 @@ public:
 
     // 返回不会改变内部状态的快照，供诊断和测试使用。
     nlohmann::json getBufferJSON() const;
+    void publishImage(const std::vector<std::uint8_t>& jpeg);
 
 private:
     struct LogData {
@@ -70,11 +72,14 @@ private:
     std::condition_variable data_cv_;
     std::deque<LogData> buffer_;
     std::uint64_t next_sequence_{1};
+    mutable std::mutex image_mutex_;
+    std::vector<std::uint8_t> latest_image_;
 };
 
 #define START_WEB_SERVER(port) WebLogger::getInstance().start(port)
 #define STOP_WEB_SERVER() WebLogger::getInstance().stop()
 #define WEB_LOG(key, value) WebLogger::getInstance().log((key), (value))
+#define WEB_IMAGE(jpeg) WebLogger::getInstance().publishImage((jpeg))
 
 #else
 
@@ -83,5 +88,6 @@ private:
 #define START_WEB_SERVER(port) ((void)0)
 #define STOP_WEB_SERVER() ((void)0)
 #define WEB_LOG(key, value) ((void)0)
+#define WEB_IMAGE(jpeg) ((void)0)
 
 #endif // WEB_DEBUG

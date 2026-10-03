@@ -1,11 +1,14 @@
 #include "ArmorDetector.hpp"
+#include "DetectionDiagnostics.hpp"
 #include "NumberClassifier.hpp"
+#include "WebLogger.hpp"
 
 #include <algorithm>
 #include <cmath>
 #include <vector>
 
 #include <opencv2/imgproc.hpp>
+#include <opencv2/imgcodecs.hpp>
 
 namespace armor_detector {
 
@@ -149,6 +152,15 @@ std::vector<ArmorDetection> detect(const cv::Mat& image, TeamColor enemy_color) 
             }
 
             detections.push_back(detection);
+        }
+    }
+    const cv::Mat diagnostic = detection_diagnostics::makeImage(
+        image, enemy_color, detections);
+    if (!diagnostic.empty()) {
+        std::vector<std::uint8_t> jpeg;
+        if (cv::imencode(".jpg", diagnostic, jpeg,
+                        {cv::IMWRITE_JPEG_QUALITY, 80})) {
+            WEB_IMAGE(jpeg);
         }
     }
     return detections;

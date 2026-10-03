@@ -132,6 +132,12 @@ void WebLogger::log(const std::string& key, double value) {
     data_cv_.notify_all();
 }
 
+void WebLogger::publishImage(const std::vector<std::uint8_t>& jpeg) {
+    if (!running_.load(std::memory_order_acquire) || jpeg.empty()) return;
+    std::lock_guard<std::mutex> lock(image_mutex_);
+    latest_image_ = jpeg;
+}
+
 bool WebLogger::isRunning() const noexcept {
     return running_.load(std::memory_order_acquire);
 }
@@ -150,6 +156,18 @@ void WebLogger::configureServer(httplib::Server& server) {
         response.set_header("Cache-Control", "no-store");
         response.set_content(
             running_.load(std::memory_order_acquire) ? "OK" : "STOPPING", "text/plain");
+    });
+
+    server.Get("/image", [this](const httplib::Request&, httplib::Response& response) {
+        std::lock_guard<std::mutex> lock(image_mutex_);
+        if (latest_image_.empty()) {
+            response.status = 404;
+            response.set_content("No processed image yet", "text/plain");
+            return;
+        }
+        response.set_header("Cache-Control", "no-store");
+        response.set_content(reinterpret_cast<const char*>(latest_image_.data()),
+                             latest_image_.size(), "image/jpeg");
     });
 
     server.Get("/data", [this](const httplib::Request& request, httplib::Response& response) {

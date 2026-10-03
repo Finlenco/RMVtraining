@@ -9,7 +9,7 @@ option(ENABLE_WEB_DEBUG "Build the scalar Web Debug dashboard" ON)
 option(BUILD_TESTING "Build the starter-project tests" ON)
 
 find_package(Eigen3 REQUIRED)
-find_package(OpenCV 4 REQUIRED COMPONENTS core imgproc calib3d dnn)
+find_package(OpenCV 4 REQUIRED COMPONENTS core imgproc imgcodecs calib3d dnn)
 find_package(Threads REQUIRED)
 
 # HIKROBOT MVS SDK
@@ -42,6 +42,7 @@ add_library(training_core STATIC
     student/src/StudentTasks.cpp
     student/src/MVS.cpp
     student/src/ArmorDetector.cpp
+    student/src/DetectionDiagnostics.cpp
     student/src/NumberClassifier.cpp
     student/src/ArmorSolver.cpp
     student/src/KalmanFilter.cpp
@@ -52,6 +53,7 @@ target_include_directories(training_core
         armor/include
         student/include
         serialPort/include
+        web_debug/include
         ${MVS_INCLUDE_DIR}
         ${OpenCV_INCLUDE_DIRS}
 )
