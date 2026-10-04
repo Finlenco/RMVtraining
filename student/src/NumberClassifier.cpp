@@ -21,14 +21,18 @@ const int kLargeWidth = 54;
 const int kLightLength = 12;
 const float kThreshold = 0.5F;
 
-int numericTargetId(const std::string& label) {
+int targetIdFromLabel(std::string label) {
 
-    try {
-        const int id = std::stoi(label);
-        return id;
-    } catch (const std::exception&) {
-    //这次只考虑数字类型
-    }
+    if (label == "1") return 1;
+    if (label == "2") return 2;
+    if (label == "3") return 3;
+    if (label == "4") return 4;
+    if (label == "5") return 5;
+
+    if (label == "outpost") return 6;
+    if (label == "guard") return 7;
+    if (label == "base") return 8;
+
     return 0;
 }
 
@@ -134,8 +138,15 @@ bool NumberClassifier::classify(const cv::Mat& source, ArmorDetection& detection
     cv::minMaxLoc(probabilities, nullptr, &best_probability, nullptr, &best);
 
     detection.confidence = static_cast<float>(best_probability);
-    detection.target_id = numericTargetId(class_names_[best.x]);
-    return detection.target_id != 0 && detection.confidence >= kThreshold;
+    int target_id = targetIdFromLabel(class_names_[best.x]);
+
+    if (target_id == 0 || detection.confidence < kThreshold) {
+        detection.target_id = 0;
+        return false;
+    }
+
+    detection.target_id = target_id;
+    return true;
 }
 
 }

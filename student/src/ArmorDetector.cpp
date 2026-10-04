@@ -110,6 +110,7 @@ bool canPair(const LightBar& left, const LightBar& right) {
 }
 
 }  
+
 std::vector<ArmorDetection> detect(const cv::Mat& image, TeamColor enemy_color) {
     if (image.empty() || image.channels() != 3) return {};
     

@@ -15,7 +15,7 @@
 namespace {
 
 
-// [中心x, vx, 中心y, vy, 装甲板z, vz, yaw, yaw速度, 半径]
+// 中心x, vx, 中心y, vy, 装甲板z, vz, yaw, yaw速度, 半径
 constexpr int kStateSize = 9;
 constexpr int kCenterX = 0;
 constexpr int kVelocityX = 1;
@@ -114,6 +114,8 @@ void limitState(Eigen::VectorXd& state) {
     state[kArmorZ] = std::clamp(state[kArmorZ], -2.0, 2.0);
     state[kRadius] = std::clamp(state[kRadius], kMinRadius, kMaxRadius);
 }
+
+
 //主要
 void createFilter(FilterContext& tracker, const ArmorPose& observation) {
     const Eigen::VectorXd measurement = makeMeasurement(observation);
@@ -125,6 +127,7 @@ void createFilter(FilterContext& tracker, const ArmorPose& observation) {
     initial_state[kArmorZ] = measurement[2];
     initial_state[kYaw] = yaw;
     initial_state[kRadius] = kInitialRadius;
+
 //初始协方差
     Eigen::MatrixXd initial_covariance = Eigen::MatrixXd::Identity(kStateSize, kStateSize);
     initial_covariance(kCenterX, kCenterX) = 0.25 * 0.25;

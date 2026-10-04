@@ -13,7 +13,7 @@
 
 由于这次的实现主要是student文件夹。是简单的实现，所以我没有另外写一个外部文件存放param，初始化就直接写在文件里面了
 
-BGR格式转换：用 cv::cvtColor(raw, pic, cv::COLOR_BayerRG2BGR)实现。
+刚开始实现时，我通过BGR格式转换：用 cv::cvtColor(raw, pic, cv::COLOR_BayerRG2BGR)实现，但采集画面之后发现画面偏黄，相机实际输出格式可能不是 BayerRG8，会导致 raw BGR 已经偏色，进而让颜色阈值和识别结果异常。之后改用帧自身的 enPixelType 交给 MVS SDK 转成标准 BGR。
 
 ## 装甲板识别
 ### 图像初始化
@@ -103,6 +103,10 @@ PredictionResult
 ```
 
 车体中心按匀速运动，朝向按匀角速度变化。观测模型把车体中心和朝向换算成装甲板位置：xa = xc - r * cos(yaw)  ，ya = yc - r * sin(yaw)  ，za = za
+
+### 图像采集测试
+
+通过Detection.cpp实现，在webdebug界面呈现raw和图像处理后的图片，方便查看，这一块和EKF主要是模型生成的。
 
 ## 附录
 

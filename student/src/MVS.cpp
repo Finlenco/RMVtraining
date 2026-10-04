@@ -139,6 +139,7 @@ bool getframe(cv::Mat& pic) {
     std::vector<unsigned char> bgr_buffer(
         static_cast<std::size_t>(width) * static_cast<std::size_t>(height) * 3U);
 
+    //转换为BGR格式
     MV_CC_PIXEL_CONVERT_PARAM_EX convert{};
     convert.nWidth = frame.stFrameInfo.nWidth;
     convert.nHeight = frame.stFrameInfo.nHeight;
