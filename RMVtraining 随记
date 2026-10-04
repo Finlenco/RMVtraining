@@ -29,6 +29,10 @@
 ## PNP解算
 主要使用OPENCV的solvePnP()，projectPoints()，Rodrigues()实现
 
+加入当前云台yaw和pitch修正之后：
+```cpp
+p_reference = R_gimbal_to_reference(yaw,pitch,roll) * (R_camera_to_gimbal * p_camera + t_camera_to_gimbal)
+```
 ## EKF解算
 底层使用项目提供的通用EKF框架，然后为了适配我另外的代码，写了EkfTracker.cpp 负责：
 \[

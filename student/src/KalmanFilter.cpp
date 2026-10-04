@@ -37,7 +37,7 @@ constexpr double kMatchDistanceM = 0.15;
 constexpr double kMatchYawDifference = 1.0;
 constexpr double kYawMeasurementSigma = 0.08;
 constexpr int kStableUpdates = 3;
-constexpr int kMaxMissedFrames = 10;
+constexpr int kMaxMissedFrames = 50;
 
 struct FilterContext {
     double last_timestamp{0.0};
@@ -302,7 +302,7 @@ double processingDelay(double frame_timestamp) {
     return std::isfinite(delay) && delay >= 0.0 && delay < 0.5 ? delay : 0.0;
 }
 
-}  
+}
 
 namespace ekf_tracker {
 
@@ -399,8 +399,9 @@ PredictionResult update(const std::vector<ArmorPose>& observations,const GimbalS
     result.radius_1_m = static_cast<float>(state[kRadius]);
     result.radius_2_m = static_cast<float>(state[kRadius]);
     result.distance_m = static_cast<float>(distance);
-    result.target_yaw = static_cast<float>(gimbal.yaw + std::atan2(target.y(), target.x()));
-    result.target_pitch = static_cast<float>(gimbal.pitch + std::atan2(target.z(), horizontal_distance));
+    // ArmorSolver 已将观测和 EKF 状态变换到固定参考系，不能再次叠加当前云台角度。
+    result.target_yaw = static_cast<float>(std::atan2(target.y(), target.x()));
+    result.target_pitch = static_cast<float>(std::atan2(target.z(), horizontal_distance));
 
     if (horizontal_distance > 1.0e-6) {
         result.target_yaw_velocity = static_cast<float>(
@@ -423,4 +424,4 @@ PredictionResult update(const std::vector<ArmorPose>& observations,const GimbalS
     return result;
 }
 
-}  
+}

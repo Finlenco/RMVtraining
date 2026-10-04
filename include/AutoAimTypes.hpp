@@ -34,7 +34,8 @@ struct GimbalState {
 
 struct CameraParameters {
     // 所有矩阵均为单通道 CV_64F。刚体变换为
-    // p_gimbal = R_camera_to_gimbal * p_camera + t_camera_to_gimbal。
+    // p_gimbal_local = R_camera_to_gimbal * p_camera + t_camera_to_gimbal；
+    // 运行时再用 GimbalState 将该局部坐标变换到固定参考系。
     bool calibrated{false};
     int image_width{0};
     int image_height{0};
@@ -56,8 +57,9 @@ struct ArmorDetection {
 };
 
 struct ArmorPose {
-    // 平移向量单位为米。armor_yaw 是云台坐标系中的偏航角（弧度），
-    // reprojection_error 是单个观测的重投影误差（像素）。
+    // 平移向量单位为米。position_gimbal_m 保留历史字段名，实际表示经过
+    // 固定相机外参与当前云台姿态变换后的固定参考坐标；armor_yaw 是该坐标系
+    // 中的偏航角（弧度）。reprojection_error 是单个观测的重投影误差（像素）。
     ArmorDetection detection;
     cv::Vec3d position_camera_m{0.0, 0.0, 0.0};
     cv::Vec3d position_gimbal_m{0.0, 0.0, 0.0};

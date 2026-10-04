@@ -24,8 +24,7 @@ std::vector<ArmorPose> armor_solve(const std::vector<ArmorDetection>& detections
     return armor_solver::solve(detections, camera, gimbal);
 }
 
-PredictionResult ekf_predict(const std::vector<ArmorPose>& observations,
-                             const GimbalState& gimbal,double timestamp_seconds) {
+PredictionResult ekf_predict(const std::vector<ArmorPose>& observations, const GimbalState& gimbal,double timestamp_seconds) {
     
     return ekf_tracker::update(observations, gimbal, timestamp_seconds);
 }
