@@ -9,7 +9,7 @@ option(ENABLE_WEB_DEBUG "Build the scalar Web Debug dashboard" ON)
 option(BUILD_TESTING "Build the starter-project tests" ON)
 
 find_package(Eigen3 REQUIRED)
-find_package(OpenCV 4 REQUIRED COMPONENTS core imgproc imgcodecs calib3d dnn)
+find_package(OpenCV 4 REQUIRED COMPONENTS core imgproc imgcodecs calib3d dnn highgui)
 find_package(Threads REQUIRED)
 
 # HIKROBOT MVS SDK

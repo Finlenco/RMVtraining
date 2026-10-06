@@ -1,18 +1,18 @@
 #include "ArmorDetector.hpp"
-#include "DetectionDiagnostics.hpp"
 #include "NumberClassifier.hpp"
-#include "WebLogger.hpp"
 
 #include <algorithm>
 #include <cmath>
 #include <vector>
 
+#include <opencv2/highgui.hpp>
 #include <opencv2/imgproc.hpp>
-#include <opencv2/imgcodecs.hpp>
 
 namespace armor_detector {
 
 namespace {
+
+constexpr char kDetectionWindow[] = "Armor Detection";
 
 struct LightBar {
     cv::RotatedRect rect;
@@ -155,15 +155,23 @@ std::vector<ArmorDetection> detect(const cv::Mat& image, TeamColor enemy_color) 
             detections.push_back(detection);
         }
     }
-    const cv::Mat diagnostic = detection_diagnostics::makeImage(
-        image, enemy_color, detections);
-    if (!diagnostic.empty()) {
-        std::vector<std::uint8_t> jpeg;
-        if (cv::imencode(".jpg", diagnostic, jpeg,
-                        {cv::IMWRITE_JPEG_QUALITY, 80})) {
-            WEB_IMAGE(jpeg);
+    // 本地单窗口显示检测结果，不再生成 JPEG 或发送 WEB_IMAGE。
+    cv::Mat display = image.clone();
+    for (const ArmorDetection& detection : detections) {
+        for (int corner = 0; corner < 4; ++corner) {
+            cv::line(display, detection.corners[corner],
+                     detection.corners[(corner + 1) % 4],
+                     cv::Scalar(0, 0, 255), 2, cv::LINE_AA);
         }
+        const cv::Point2f center =
+            (detection.corners[0] + detection.corners[1] +
+             detection.corners[2] + detection.corners[3]) * 0.25F;
+        cv::putText(display, "id=" + std::to_string(detection.target_id),
+                    center, cv::FONT_HERSHEY_SIMPLEX, 0.7,
+                    cv::Scalar(0, 0, 255), 2, cv::LINE_AA);
     }
+    cv::imshow(kDetectionWindow, display);
+    cv::waitKey(1);
     return detections;
 }
 
