@@ -42,7 +42,6 @@ add_library(training_core STATIC
     student/src/StudentTasks.cpp
     student/src/MVS.cpp
     student/src/ArmorDetector.cpp
-    student/src/DetectionDiagnostics.cpp
     student/src/NumberClassifier.cpp
     student/src/ArmorSolver.cpp
     student/src/KalmanFilter.cpp
