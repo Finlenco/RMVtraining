@@ -46,7 +46,7 @@ bool selectCamera() {
             return false;
         }
         c.sdk_initialized = true;
-    }
+    }//进行初始化
 
     MV_CC_DEVICE_INFO_LIST list{};
     if (MV_CC_EnumDevices(MV_USB_DEVICE, &list) != MV_OK) return false;

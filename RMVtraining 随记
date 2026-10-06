@@ -29,10 +29,13 @@
 ## PNP解算
 主要使用OPENCV的solvePnP()，projectPoints()，Rodrigues()实现
 
+相机坐标系(x前, y左, z上)，正 pitch 使 x 轴朝 +z 转动，正 roll 使 +y 朝 +z 转动。
+
 加入当前云台yaw和pitch修正之后：
 ```cpp
 p_reference = R_gimbal_to_reference(yaw,pitch,roll) * (R_camera_to_gimbal * p_camera + t_camera_to_gimbal)
 ```
+
 ## EKF解算
 底层使用项目提供的通用EKF框架，然后为了适配我另外的代码，写了EkfTracker.cpp 负责：
 \[
@@ -51,7 +54,7 @@ X = X + K\left(Z - h(X)\right)
 - 雅可比矩阵
 - 过程噪声和观测噪声
 
-target_yaw = 当前云台yaw+视觉坐标系中的目标方向
+`target_yaw` 直接由已经变换到固定参考系的 EKF 预测位置计算，不能再次叠加当前云台 yaw，否则会重复补偿。
 
 update流程
 
@@ -77,7 +80,7 @@ ArmorPose
    └── 没匹配 ────────► Missed Frame
                           │
                           ▼
-                     超过10帧reset
+超过 `kMaxMissedFrames`（当前为50帧）才 reset；短时丢帧期间继续使用预测状态，但输出保持 Unstable，不允许开火。
 
 正常匹配
    │
@@ -88,8 +91,8 @@ EKF Predict
 EKF Update
    │
    ▼
-9维状态
-[x,vx,y,vy,z,vz,yaw,ω,r]
+13维状态
+[xc,vx,yc,vy,z0,z1,z2,z3,r1,r2,yaw,ω,vz]
    │
    ▼
 预测未来 lead_time
@@ -107,6 +110,39 @@ PredictionResult
 ```
 
 车体中心按匀速运动，朝向按匀角速度变化。观测模型把车体中心和朝向换算成装甲板位置：xa = xc - r * cos(yaw)  ，ya = yc - r * sin(yaw)  ，za = za
+
+### 修改
+
+对 2026-10-04 的 Web Debug CSV 分析得到：平均约 38.75 FPS，`armor_count=0` 占约 43.5%，最长连续无装甲板检测约 3.25 s。状态 1/2 的主要切换来自检测丢失恢复，而不是单纯的 Q/R 参数；PnP 重投影误差中位数约 3.97 px。半径状态还从约 0.25 m 漂移到原下限 0.12 m。
+
+基于该数据先加入目标锁定、编号误识别容错、丢帧预测和半径限制；随后把跟踪状态扩展为四槽位模型：
+
+- 已经连续匹配 10 帧后记为锁定目标；短时没有观测时保留 EKF 预测，状态标记为 `Unstable`，避免把预测结果用于开火。
+- 同编号观测优先匹配；数字偶发误识别时，如果位置差小于 0.08 m 且 yaw 差小于 0.5 rad，也接受几何备用观测，但保持原来的目标编号。
+- 目标锁定后把半径限制在 0.20～0.30 m，初始化阶段仍使用 0.25 m，普通未锁定目标仍使用原来的 0.12～0.40 m 范围。
+
+这些处理针对当前日志中的间歇漏检和半径漂移。后续若仍有滞后或过度跟随，再单独调整测量噪声、角加速度噪声和初始协方差，避免把丢帧问题误判为 Q/R 问题。
+
+### 四块装甲板同时维护
+
+EKF 使用 13 维状态，同时估计车体运动、两种半径和四块装甲板高度：
+
+```text
+[xc, vx, yc, vy, z0, z1, z2, z3, r1, r2, body_yaw, yaw_rate, vz]
+```
+
+观测向量为 16 维，每块装甲板各有一组 `(x, y, z, armor_yaw)`。车体 yaw 给出四个槽位的理论朝向：
+
+```text
+slot 0: body_yaw
+slot 1: body_yaw + pi/2
+slot 2: body_yaw + pi
+slot 3: body_yaw + 3*pi/2
+```
+
+每帧按 yaw 和预测位置把每个检测分配到对应槽位，同一槽位有多个候选时优先选编号匹配且位置最近的观测。已观测槽位使用 PnP 结果；缺失槽位使用 EKF 预测值填充，同时把该槽位的测量噪声放大 25 倍，因此四块装甲板状态每帧都会一起参与更新，但缺失槽位对更新的影响较弱。
+
+两块相对装甲板共享 `r1`，另外两块共享 `r2`；四块装甲板高度分别估计，并共享竖直速度。该结构参考 AIMBOT26 的 13 状态/16 维观测布局，保留本项目原有的 `PredictionResult` 输出接口。
 
 ### 图像采集测试
 
@@ -162,4 +198,3 @@ typedef struct _MV_CC_PIXEL_CONVERT_PARAM_EX_
 | `latency`                           | ms         |
 | `prediction_bias_s`                 | s          |
 | 时间戳参数                          | s          |
-

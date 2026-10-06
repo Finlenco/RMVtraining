@@ -69,7 +69,9 @@ double reprojectionError(const std::vector<cv::Point3f>& object_points,
 namespace armor_solver {
 
 std::vector<ArmorPose> solve(const std::vector<ArmorDetection>& detections,const CameraParameters& camera,const GimbalState& gimbal) {
+    
     std::vector<ArmorPose> poses;
+
     const cv::Mat gimbal_to_reference = gimbalToReferenceRotation(gimbal);
 
     for (const ArmorDetection& detection : detections) {
