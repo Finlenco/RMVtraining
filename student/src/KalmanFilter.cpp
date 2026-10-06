@@ -13,18 +13,22 @@
 
 namespace {
 
-// [xc,vx,yc,vy,z0,z1,z2,z3,r1,r2,yaw,vyaw,vz]
-constexpr int kStateSize = 13;
+// [xc,vx,yc,vy,z_even,z_odd,r1,r2,yaw,vyaw,vz]
+constexpr int kStateSize = 11;
 constexpr int kCx = 0, kVx = 1, kCy = 2, kVy = 3;
-constexpr int kZ0 = 4, kR1 = 8, kR2 = 9, kYaw = 10, kVyaw = 11, kVz = 12;
+constexpr int kZEven = 4, kZOdd = 5, kR1 = 6, kR2 = 7, kYaw = 8, kVyaw = 9, kVz = 10;
 constexpr int kSlotCount = 4, kSlotMeasurementSize = 4;
-constexpr double kPi = 3.14159265358979323846;
+constexpr double kPi = 3.1415926;
 constexpr double kInitialRadius = 0.25;
 constexpr double kMinRadius = 0.12, kMaxRadius = 0.40;
-constexpr double kMatchDistanceM = 0.15, kMatchYawDifference = 1.0;
-constexpr double kMismatchDistanceM = 0.08, kMismatchYawDifference = 0.5;
-constexpr double kYawSigma = 0.08;
-constexpr int kStableUpdates = 3, kLockFrames = 10, kMaxMissedFrames = 50;
+constexpr double kMatchDistanceM = 0.12, kMatchYawDifference = 0.6;
+constexpr double kMismatchDistanceM = 0.07, kMismatchYawDifference = 0.35;
+constexpr double kYawSigma = 0.12;
+constexpr double kMaxAcceptedYawStep = 0.25;
+constexpr double kMaxAngularVelocity = 8.0;
+constexpr double kMaxAngularAcceleration = 20.0;
+constexpr int kStableUpdates = 3, kLockFrames = 10;
+constexpr int kUnlockLostFrames = 5, kMaxMissedFrames = 50;
 
 struct FilterContext {
     double last_timestamp{0.0}, dt{0.02};
@@ -32,13 +36,13 @@ struct FilterContext {
     bool target_locked{false};
     std::uint8_t target_id{0};
     std::array<double, kSlotCount> measurement_sigma{0.02, 0.02, 0.02, 0.02};
+    std::array<double, kSlotCount> yaw_sigma{kYawSigma, kYawSigma, kYawSigma, kYawSigma};
     std::array<bool, kSlotCount> slot_observed{};
     std::unique_ptr<ExtendedKalmanFilter> filter;
 };
 
 FilterContext& context() { static FilterContext tracker; return tracker; }
 double wrapAngle(double a) { return std::remainder(a, 2.0 * kPi); }
-int wrapSlot(int slot) { slot %= kSlotCount; return slot < 0 ? slot + kSlotCount : slot; }
 
 Eigen::Vector3d position(const ArmorPose& p) {
     return {p.position_gimbal_m[0], p.position_gimbal_m[1], p.position_gimbal_m[2]};
@@ -52,7 +56,7 @@ bool valid(const ArmorPose& p) {
 }
 
 double radius(const Eigen::VectorXd& x, int slot) { return slot % 2 == 0 ? x[kR1] : x[kR2]; }
-int heightIndex(int slot) { return kZ0 + slot; }
+int heightIndex(int slot) { return slot % 2 == 0 ? kZEven : kZOdd; }
 
 Eigen::Vector3d slotPosition(const Eigen::VectorXd& x, int slot) {
     const double angle = x[kYaw] + slot * kPi / 2.0, r = radius(x, slot);
@@ -89,7 +93,7 @@ void setConstantVelocityNoise(Eigen::MatrixXd& q, int p, int v, double variance,
 }
 
 void limitState(Eigen::VectorXd& x, const FilterContext& t) {
-    x[kVyaw] = std::clamp(x[kVyaw], -20.0, 20.0);
+    x[kVyaw] = std::clamp(x[kVyaw], -kMaxAngularVelocity, kMaxAngularVelocity);
     x[kVz] = std::clamp(x[kVz], -5.0, 5.0); x[kYaw] = wrapAngle(x[kYaw]);
     const double lo = t.target_locked ? 0.20 : kMinRadius;
     const double hi = t.target_locked ? 0.30 : kMaxRadius;
@@ -97,8 +101,13 @@ void limitState(Eigen::VectorXd& x, const FilterContext& t) {
 }
 
 void updateMeasurementNoise(FilterContext& t, const ArmorPose& p, int slot) {
-    t.measurement_sigma[slot] = p.reprojection_error > 0.0
-        ? std::clamp(0.015 + p.reprojection_error * 0.002, 0.015, 0.10) : 0.02;
+    if (p.reprojection_error > 0.0) {
+        t.measurement_sigma[slot] = std::clamp(0.015 + p.reprojection_error * 0.002, 0.015, 0.10);
+        t.yaw_sigma[slot] = std::clamp(0.10 + p.reprojection_error * 0.012, 0.10, 0.25);
+    } else {
+        t.measurement_sigma[slot] = 0.02;
+        t.yaw_sigma[slot] = kYawSigma;
+    }
 }
 
 void createFilter(FilterContext& t, const ArmorPose& p) {
@@ -107,26 +116,26 @@ void createFilter(FilterContext& t, const ArmorPose& p) {
     x[kCx] = xyz.x() + kInitialRadius * std::cos(p.armor_yaw);
     x[kCy] = xyz.y() + kInitialRadius * std::sin(p.armor_yaw);
     x[kYaw] = p.armor_yaw; x[kR1] = x[kR2] = kInitialRadius;
-    for (int i = 0; i < kSlotCount; ++i) x[heightIndex(i)] = xyz.z();
+    x[kZEven] = x[kZOdd] = xyz.z();
 
     Eigen::MatrixXd p0 = Eigen::MatrixXd::Identity(kStateSize, kStateSize);
     p0(kCx, kCx) = p0(kCy, kCy) = 0.25 * 0.25;
     p0(kVx, kVx) = p0(kVy, kVy) = p0(kVyaw, kVyaw) = 4.0;
     p0(kYaw, kYaw) = 0.25;
     p0(kR1, kR1) = p0(kR2, kR2) = 0.08 * 0.08;
-    for (int i = 0; i < kSlotCount; ++i) p0(heightIndex(i), heightIndex(i)) = 0.01;
+    p0(kZEven, kZEven) = p0(kZOdd, kZOdd) = 0.01;
 
     auto f = [&t](const Eigen::VectorXd& s) {
         Eigen::VectorXd n = s;
         n[kCx] += t.dt * s[kVx]; n[kCy] += t.dt * s[kVy];
         n[kYaw] = wrapAngle(s[kYaw] + t.dt * s[kVyaw]);
-        for (int i = 0; i < kSlotCount; ++i) n[heightIndex(i)] += t.dt * s[kVz];
+        n[kZEven] += t.dt * s[kVz]; n[kZOdd] += t.dt * s[kVz];
         return n;
     };
     auto jf = [&t](const Eigen::VectorXd&) {
         Eigen::MatrixXd j = Eigen::MatrixXd::Identity(kStateSize, kStateSize);
         j(kCx, kVx) = j(kCy, kVy) = j(kYaw, kVyaw) = t.dt;
-        for (int i = 0; i < kSlotCount; ++i) j(heightIndex(i), kVz) = t.dt;
+        j(kZEven, kVz) = j(kZOdd, kVz) = t.dt;
         return j;
     };
     auto q = [&t]() {
@@ -136,18 +145,19 @@ void createFilter(FilterContext& t, const ArmorPose& p) {
         setConstantVelocityNoise(n, kYaw, kVyaw, 4.0, t.dt);
         n(kVz, kVz) = 0.05 * t.dt;
         n(kR1, kR1) = n(kR2, kR2) = 1.0e-4 * t.dt;
-        for (int i = 0; i < kSlotCount; ++i) n(heightIndex(i), heightIndex(i)) = 0.01 * t.dt;
+        n(kZEven, kZEven) = n(kZOdd, kZOdd) = 0.01 * t.dt;
         return n;
     };
     auto r = [&t](const Eigen::VectorXd&) {
-        Eigen::MatrixXd n = Eigen::MatrixXd::Zero(16, 16);
+    Eigen::MatrixXd n = Eigen::MatrixXd::Zero(kSlotCount * kSlotMeasurementSize,
+                                               kSlotCount * kSlotMeasurementSize);
         for (int slot = 0; slot < kSlotCount; ++slot) {
             const int i = slot * kSlotMeasurementSize;
             const double scale = t.slot_observed[slot] ? 1.0 : 25.0;
             const double sigma = t.measurement_sigma[slot];
             const double pv = sigma * sigma * scale;
             n(i, i) = n(i + 1, i + 1) = n(i + 2, i + 2) = pv;
-            n(i + 3, i + 3) = kYawSigma * kYawSigma * scale;
+            n(i + 3, i + 3) = t.yaw_sigma[slot] * t.yaw_sigma[slot] * scale;
         }
         return n;
     };
@@ -162,7 +172,7 @@ void createFilter(FilterContext& t, const ArmorPose& p) {
 
 struct Match {
     const ArmorPose* pose{nullptr};
-    double distance{INFINITY}, yaw{INFINITY};
+    double distance{INFINITY}, yaw{INFINITY}, cost{INFINITY};
     bool same_id{false};
 };
 
@@ -172,17 +182,26 @@ std::array<Match, kSlotCount> matchSlots(const FilterContext& t,
     const auto& x = t.filter->get_nochange_X();
     for (const auto& p : observations) {
         if (!valid(p)) continue;
-        const int slot = wrapSlot(static_cast<int>(std::lround(
-            wrapAngle(p.armor_yaw - x[kYaw]) / (kPi / 2.0))));
-        const double d = (position(p) - slotPosition(x, slot)).norm();
-        const double dy = std::abs(wrapAngle(p.armor_yaw - (x[kYaw] + slot * kPi / 2.0)));
         const bool same_id = p.detection.target_id == t.target_id;
         const double max_distance = same_id ? kMatchDistanceM : kMismatchDistanceM;
         const double max_yaw = same_id ? kMatchYawDifference : kMismatchYawDifference;
-        if (d >= max_distance || dy >= max_yaw) continue;
-        if (!matches[slot].pose || (same_id && !matches[slot].same_id) ||
-            (same_id == matches[slot].same_id && d < matches[slot].distance)) {
-            matches[slot] = {&p, d, dy, same_id};
+        int best_slot = -1;
+        Match candidate;
+        for (int slot = 0; slot < kSlotCount; ++slot) {
+            const double d = (position(p) - slotPosition(x, slot)).norm();
+            const double dy = std::abs(wrapAngle(
+                p.armor_yaw - (x[kYaw] + slot * kPi / 2.0)));
+            if (d >= max_distance || dy >= max_yaw) continue;
+            const double cost = d + 0.08 * dy;
+            if (cost < candidate.cost) {
+                candidate = {&p, d, dy, cost, same_id};
+                best_slot = slot;
+            }
+        }
+        if (best_slot < 0) continue;
+        if (!matches[best_slot].pose || (same_id && !matches[best_slot].same_id) ||
+            (same_id == matches[best_slot].same_id && candidate.cost < matches[best_slot].cost)) {
+            matches[best_slot] = candidate;
         }
     }
     return matches;
@@ -199,6 +218,30 @@ Eigen::VectorXd makeMeasurement(const Eigen::VectorXd& predicted,
         z[i + 3] = matches[slot].pose->armor_yaw;
     }
     return z;
+}
+
+void rejectYawOutliers(Eigen::VectorXd& measurement, const Eigen::VectorXd& predicted,
+                       const FilterContext& t) {
+    for (int slot = 0; slot < kSlotCount; ++slot) {
+        if (!t.slot_observed[slot]) continue;
+        const int i = slot * kSlotMeasurementSize + 3;
+        if (std::abs(wrapAngle(measurement[i] - predicted[i])) > kMaxAcceptedYawStep) {
+            measurement[i] = predicted[i];
+        }
+    }
+}
+
+void limitAngularUpdate(Eigen::VectorXd& state, const Eigen::VectorXd& previous,
+                        double dt, const FilterContext& t) {
+    const double yaw_step = wrapAngle(state[kYaw] - previous[kYaw]);
+    state[kYaw] = previous[kYaw] +
+                  std::clamp(yaw_step, -kMaxAcceptedYawStep, kMaxAcceptedYawStep);
+    const double max_velocity_step = kMaxAngularAcceleration * std::max(dt, 0.001);
+    state[kVyaw] = previous[kVyaw] +
+                   std::clamp(state[kVyaw] - previous[kVyaw],
+                              -max_velocity_step, max_velocity_step);
+    state[kVyaw] = std::clamp(state[kVyaw], -kMaxAngularVelocity, kMaxAngularVelocity);
+    (void)t;
 }
 
 double processingDelay(double timestamp) {
@@ -244,12 +287,21 @@ PredictionResult update(const std::vector<ArmorPose>& observations, const Gimbal
         }
         if (count > 0) {
             const auto predicted = observationModel(t.filter->get_nochange_X());
-            t.filter->update(makeMeasurement(predicted, matches, t));
+            Eigen::VectorXd measurement = makeMeasurement(predicted, matches, t);
+            rejectYawOutliers(measurement, predicted, t);
+            const Eigen::VectorXd previous = t.filter->get_nochange_X();
+            t.filter->update(measurement);
+            limitAngularUpdate(t.filter->get_X(), previous, t.dt, t);
             limitState(t.filter->get_X(), t);
             t.missed_frames = 0; t.stable_updates = std::min(t.stable_updates + 1, kStableUpdates);
             if (++t.lock_frames >= kLockFrames) t.target_locked = true;
         } else {
             ++t.missed_frames;
+            t.stable_updates = 0;
+            if (t.missed_frames > kUnlockLostFrames) {
+                t.target_locked = false;
+                t.lock_frames = 0;
+            }
         }
     }
     if (!t.filter || t.missed_frames > kMaxMissedFrames) { reset(); return {}; }
@@ -260,15 +312,14 @@ PredictionResult update(const std::vector<ArmorPose>& observations, const Gimbal
     Eigen::VectorXd future = state;
     future[kCx] += lead * state[kVx]; future[kCy] += lead * state[kVy];
     future[kYaw] = wrapAngle(state[kYaw] + lead * state[kVyaw]);
-    for (int i = 0; i < kSlotCount; ++i) future[heightIndex(i)] += lead * state[kVz];
+    future[kZEven] += lead * state[kVz]; future[kZOdd] += lead * state[kVz];
     const auto target = slotPosition(future, 0);
     const Eigen::Vector3d velocity{state[kVx] + state[kR1] * std::sin(future[kYaw]) * state[kVyaw],
                                    state[kVy] - state[kR1] * std::cos(future[kYaw]) * state[kVyaw],
                                    state[kVz]};
     const double horizontal = std::hypot(target.x(), target.y()), distance = target.norm();
     PredictionResult result;
-    result.state = t.stable_updates >= kStableUpdates && t.missed_frames == 0
-                       ? TrackingState::Stable : TrackingState::Unstable;
+    result.state = t.stable_updates >= kStableUpdates && t.missed_frames == 0 ? TrackingState::Stable : TrackingState::Unstable;
     result.target_id = t.target_id;
     result.center_x_m = future[kCx]; result.center_y_m = future[kCy];
     result.center_velocity_x_m_s = state[kVx]; result.center_velocity_y_m_s = state[kVy];
