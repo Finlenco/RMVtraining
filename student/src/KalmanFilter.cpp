@@ -32,7 +32,7 @@ constexpr int kVz = 10;
 constexpr int kSlotCount = 4;
 constexpr int kSlotMeasurementSize = 4;  // x, y, z, armor yaw
 constexpr int kMeasurementSize = kSlotCount * kSlotMeasurementSize;
-constexpr double kPi = 3.14159265358979323846;
+constexpr double kPi = 3.1415926;
 
 // 这些阈值用于数据关联，不是 EKF 的 Q/R 参数。
 constexpr double kInitialRadius = 0.25;
@@ -40,20 +40,21 @@ constexpr double kMinRadius = 0.12;
 constexpr double kMaxRadius = 0.40;
 constexpr double kMatchDistance = 0.15;
 constexpr double kMatchYawDifference = 1.0;
-constexpr double kIdMismatchDistance = 0.08;
-constexpr double kIdMismatchYawDifference = 0.45;
 
-// 参考 rm_auto_aim 的状态机：检测若干帧进入 Tracking，短时丢失进入 TempLost。
+//检测若干帧进入 Tracking，短时丢失进入 TempLost
 constexpr int kTrackingFrames = 5;
 constexpr int kTempLostFrames = 5;
 constexpr int kResetMissedFrames = 50;
+// 目标装甲板短时不可见时继续沿用原槽位，避免输出瞬间跳到另一块板。
+constexpr int kTargetSlotSwitchFrames = kTempLostFrames;
 
-// 旋转车体的保守角度参数，避免单帧 PnP 抖动污染 yaw rate。
+// 旋转车体的保守角度参数，避免单帧 PnP 抖动污染 yaw rate
 constexpr double kBaseYawSigma = 0.12;
 constexpr double kYawResidualGate = 0.35;
 constexpr double kMaxYawRate = 8.0;
 constexpr double kMaxYawAcceleration = 20.0;
 constexpr double kMissingMeasurementNoiseScale = 100.0;
+constexpr double kMaxYawCorrection = 0.35;
 
 enum class TrackState { Lost, Detecting, Tracking, TempLost };
 
@@ -65,6 +66,10 @@ struct TrackerContext {
     int lost_frames{0};
     TrackState state{TrackState::Lost};
     std::uint8_t target_id{0};
+    int target_slot{0};
+    int target_slot_missed{0};
+    double lead_time_s{0.0};
+    bool lead_time_initialized{false};
     std::array<bool, kSlotCount> observed{};
     std::array<double, kSlotCount> position_sigma{0.02, 0.02, 0.02, 0.02};
     std::array<double, kSlotCount> yaw_sigma{
@@ -304,9 +309,12 @@ void searchAssignments(const TrackerContext& context,
             continue;
         }
         const ArmorPose& pose = observations[index];
-        const bool same_id = pose.detection.target_id == context.target_id;
-        const double max_distance = same_id ? kMatchDistance : kIdMismatchDistance;
-        const double max_yaw = same_id ? kMatchYawDifference : kIdMismatchYawDifference;
+        // 一个 EKF 只维护一个编号；分类器编号变化时暂不把其他目标喂给当前滤波器。
+        // 让它经过丢失超时后重新初始化，比把另一个目标接到当前轨迹上更稳定。
+        if (pose.detection.target_id != context.target_id) continue;
+        const bool same_id = true;
+        const double max_distance = kMatchDistance;
+        const double max_yaw = kMatchYawDifference;
         const Eigen::Vector3d delta = positionOf(pose) - predictedArmorPosition(state, slot);
         const double position_error = delta.norm();
         const double yaw_error = std::abs(wrapAngle(
@@ -329,6 +337,36 @@ void searchAssignments(const TrackerContext& context,
         next.cost += match.cost;
         searchAssignments(context, observations, state, slot + 1,
                           used | (std::uint64_t{1} << index), next, best);
+    }
+}
+
+void updateTargetSlot(TrackerContext& context, const Assignment& assignment) {
+    if (context.target_slot < 0 || context.target_slot >= kSlotCount) {
+        context.target_slot = 0;
+        context.target_slot_missed = 0;
+    }
+
+    // 当前装甲板仍被观测到时保持槽位，避免四块板之间来回切换。
+    if (assignment.matches[context.target_slot].pose != nullptr) {
+        context.target_slot_missed = 0;
+        return;
+    }
+
+    ++context.target_slot_missed;
+    if (context.target_slot_missed < kTargetSlotSwitchFrames) return;
+
+    int candidate_slot = -1;
+    double candidate_cost = std::numeric_limits<double>::infinity();
+    for (int slot = 0; slot < kSlotCount; ++slot) {
+        const Match& match = assignment.matches[slot];
+        if (match.pose != nullptr && match.cost < candidate_cost) {
+            candidate_slot = slot;
+            candidate_cost = match.cost;
+        }
+    }
+    if (candidate_slot >= 0) {
+        context.target_slot = candidate_slot;
+        context.target_slot_missed = 0;
     }
 }
 
@@ -382,12 +420,31 @@ Eigen::VectorXd makeMeasurement(const Eigen::VectorXd& predicted,
 
 void limitAngularUpdate(Eigen::VectorXd& state, const Eigen::VectorXd& previous,
                         double dt) {
+    // 位置观测也会通过雅可比修正 yaw。限制单帧校正量，避免一帧错误
+    // PnP 把输出从当前装甲板拉到另一块板；正常旋转由过程模型先行推进。
+    const double max_yaw_correction = std::clamp(
+        kMaxYawRate * std::max(dt, 0.001) + 0.08, 0.10, kMaxYawCorrection);
+    const double yaw_correction = wrapAngle(state[kYaw] - previous[kYaw]);
+    state[kYaw] = wrapAngle(previous[kYaw] +
+                            std::clamp(yaw_correction, -max_yaw_correction,
+                                       max_yaw_correction));
+
     const double max_yaw_rate_change = kMaxYawAcceleration * std::max(dt, 0.001);
     state[kYawRate] = previous[kYawRate] + std::clamp(
         state[kYawRate] - previous[kYawRate],
         -max_yaw_rate_change, max_yaw_rate_change);
     state[kYawRate] = std::clamp(state[kYawRate], -kMaxYawRate, kMaxYawRate);
     state[kYaw] = wrapAngle(state[kYaw]);
+}
+
+bool finiteState(const Eigen::VectorXd& state) {
+    return state.size() == kStateSize && state.allFinite();
+}
+
+bool finiteFilter(const ExtendedKalmanFilter& filter, bool posterior) {
+    const Eigen::MatrixXd& covariance = posterior
+        ? filter.get_P_post() : filter.get_P_pri();
+    return finiteState(filter.get_nochange_X()) && covariance.allFinite();
 }
 
 void updateTrackState(TrackerContext& context, bool matched) {
@@ -430,6 +487,26 @@ double processingDelay(double timestamp) {
     return std::isfinite(delay) && delay >= 0.0 && delay < 0.5 ? delay : 0.0;
 }
 
+double updateLeadTime(TrackerContext& context, const GimbalState& gimbal,
+                      double timestamp_seconds) {
+    const double prediction_bias = std::isfinite(gimbal.prediction_bias_s)
+        ? static_cast<double>(gimbal.prediction_bias_s) : 0.0;
+    const double requested = std::clamp(
+        prediction_bias + processingDelay(timestamp_seconds), 0.0, 0.2);
+    if (!context.lead_time_initialized) {
+        context.lead_time_s = requested;
+        context.lead_time_initialized = true;
+        return context.lead_time_s;
+    }
+
+    // 处理耗时和串口 bias 的单帧变化不应直接变成目标角度跳变。
+    const double max_step = std::clamp(0.5 * std::max(context.dt, 0.001),
+                                       0.002, 0.02);
+    context.lead_time_s += std::clamp(requested - context.lead_time_s,
+                                     -max_step, max_step);
+    return context.lead_time_s;
+}
+
 }  // namespace
 
 namespace ekf_tracker {
@@ -450,6 +527,7 @@ PredictionResult update(const std::vector<ArmorPose>& observations,
         } else {
             context.dt = std::clamp(elapsed, 0.001, 0.1);
             context.filter->predict();
+            if (!finiteFilter(*context.filter, false)) reset();
         }
     }
     context.last_timestamp = timestamp_seconds;
@@ -471,10 +549,16 @@ PredictionResult update(const std::vector<ArmorPose>& observations,
             context.filter->update(measurement);
             limitAngularUpdate(context.filter->get_X(), previous, context.dt);
             limitState(context.filter->get_X());
+            if (!finiteFilter(*context.filter, true)) {
+                reset();
+                return {};
+            }
+            updateTargetSlot(context, assignment);
             updateTrackState(context, true);
         } else {
             context.observed.fill(false);
             context.yaw_rejected.fill(false);
+            updateTargetSlot(context, Assignment{});
             updateTrackState(context, false);
         }
     }
@@ -485,9 +569,7 @@ PredictionResult update(const std::vector<ArmorPose>& observations,
     }
 
     const Eigen::VectorXd& state = context.filter->get_nochange_X();
-    const double lead_time = std::clamp(
-        static_cast<double>(gimbal.prediction_bias_s) + processingDelay(timestamp_seconds),
-        0.0, 0.2);
+    const double lead_time = updateLeadTime(context, gimbal, timestamp_seconds);
     Eigen::VectorXd future = state;
     future[kX] += lead_time * state[kVx];
     future[kY] += lead_time * state[kVy];
@@ -495,10 +577,13 @@ PredictionResult update(const std::vector<ArmorPose>& observations,
     future[kZOdd] += lead_time * state[kVz];
     future[kYaw] = wrapAngle(state[kYaw] + lead_time * state[kYawRate]);
 
-    const Eigen::Vector3d target = predictedArmorPosition(future, 0);
+    const int target_slot = std::clamp(context.target_slot, 0, kSlotCount - 1);
+    const Eigen::Vector3d target = predictedArmorPosition(future, target_slot);
+    const double target_radius = radiusOf(state, target_slot);
+    const double target_angle = future[kYaw] + target_slot * kPi / 2.0;
     const Eigen::Vector3d target_velocity{
-        state[kVx] + state[kREven] * std::sin(future[kYaw]) * state[kYawRate],
-        state[kVy] - state[kREven] * std::cos(future[kYaw]) * state[kYawRate],
+        state[kVx] + target_radius * std::sin(target_angle) * state[kYawRate],
+        state[kVy] - target_radius * std::cos(target_angle) * state[kYawRate],
         state[kVz]};
     const double horizontal_distance = std::hypot(target.x(), target.y());
     const double distance = target.norm();
