@@ -34,7 +34,7 @@ constexpr int kSlotMeasurementSize = 4;  // x, y, z, armor yaw
 constexpr int kMeasurementSize = kSlotCount * kSlotMeasurementSize;
 constexpr double kPi = 3.1415926;
 
-// 这些阈值用于数据关联，不是 EKF 的 Q/R 参数。
+// 阈值
 constexpr double kInitialRadius = 0.25;
 constexpr double kMinRadius = 0.12;
 constexpr double kMaxRadius = 0.40;
@@ -171,12 +171,12 @@ void limitState(Eigen::VectorXd& state) {
 void updateObservationNoise(TrackerContext& context, const ArmorPose& pose, int slot) {
     if (pose.reprojection_error > 0.0) {
         context.position_sigma[slot] =
-            std::clamp(0.015 + pose.reprojection_error * 0.002, 0.015, 0.10);
+            std::clamp(0.025 + pose.reprojection_error * 0.0025, 0.025, 0.15);
         context.yaw_sigma[slot] =
-            std::clamp(0.10 + pose.reprojection_error * 0.012, 0.10, 0.30);
+            std::clamp(0.15 + pose.reprojection_error * 0.015, 0.15, 0.40);
     } else {
-        context.position_sigma[slot] = 0.02;
-        context.yaw_sigma[slot] = kBaseYawSigma;
+        context.position_sigma[slot] = 0.03;
+        context.yaw_sigma[slot] = 0.15;
     }
 }
 

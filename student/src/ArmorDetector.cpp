@@ -13,6 +13,8 @@ namespace armor_detector {
 namespace {
 
 constexpr char kDetectionWindow[] = "Armor Detection";
+constexpr double kRedBrightnessThreshold = 120.0;
+constexpr double kBlueBrightnessThreshold = 90.0;
 
 struct LightBar {
     cv::RotatedRect rect;
@@ -37,7 +39,9 @@ cv::Mat makeColorMask(const cv::Mat& image, TeamColor enemy_color) {
     cv::Mat color_mask;
 
     cv::cvtColor(image, gray, cv::COLOR_BGR2GRAY);
-    cv::threshold(gray, bright_mask, 150, 255, cv::THRESH_BINARY);
+    const double brightness_threshold = enemy_color == TeamColor::Red
+        ? kRedBrightnessThreshold : kBlueBrightnessThreshold;
+    cv::threshold(gray, bright_mask, brightness_threshold, 255, cv::THRESH_BINARY);
     cv::threshold(color_difference, color_mask, 40, 255, cv::THRESH_BINARY);
 
     cv::Mat mask;
@@ -67,28 +71,28 @@ bool makeLightBar(const std::vector<cv::Point>& contour, LightBar& light) {
 
 //找角点
 cv::Point2f topPoint(const cv::RotatedRect& rect) {
-    cv::Point2f points[4];
-    rect.points(points);
+    cv::Point2f p[4];
+    rect.points(p);
 
-    cv::Point2f top = points[0];
-    for(int i = 0; i < 4 ; i++){
-        if(points[i].y < top.y){
-            top = points[i];
-        }
-    }
+    std::sort(p, p + 4, [](const cv::Point2f& a, const cv::Point2f& b) {
+        return a.y < b.y;
+    });
+
+    cv::Point2f top = (p[0] + p[1]) / 2.0f;
+
     return top;
 }
 
 cv::Point2f bottomPoint(const cv::RotatedRect& rect) {
-    cv::Point2f points[4];
-    rect.points(points);
+    cv::Point2f p[4];
+    rect.points(p);
 
-    cv::Point2f top = points[0];
-    for(int i = 0; i < 4 ; i++){
-        if(points[i].y > top.y){
-            top = points[i];
-        }
-    }
+    std::sort(p, p + 4, [](const cv::Point2f& a, const cv::Point2f& b) {
+        return a.y < b.y;
+    });
+
+    cv::Point2f top = (p[2] + p[3]) / 2.0f;
+
     return top;
 }
 
