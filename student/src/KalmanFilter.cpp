@@ -38,23 +38,29 @@ constexpr double kPi = 3.1415926;
 constexpr double kInitialRadius = 0.25;
 constexpr double kMinRadius = 0.12;
 constexpr double kMaxRadius = 0.40;
-constexpr double kMatchDistance = 0.15;
+constexpr double kMatchDistance = 0.20;
 constexpr double kMatchYawDifference = 1.0;
+constexpr double kIdMismatchDistance = 0.14;
+constexpr double kIdMismatchYawDifference = 0.60;
 
 //检测若干帧进入 Tracking，短时丢失进入 TempLost
 constexpr int kTrackingFrames = 5;
 constexpr int kTempLostFrames = 5;
+constexpr int kStablePredictionFrames = 3;
 constexpr int kResetMissedFrames = 50;
 // 目标装甲板短时不可见时继续沿用原槽位，避免输出瞬间跳到另一块板。
 constexpr int kTargetSlotSwitchFrames = kTempLostFrames;
 
-// 旋转车体的保守角度参数，避免单帧 PnP 抖动污染 yaw rate
+// 高速旋转参数。Q 的量纲是米/弧度状态对应的加速度方差，已经按本工程
+// 的米制坐标换算；不能直接照搬 aimbot_26 的毫米制数值。
 constexpr double kBaseYawSigma = 0.12;
-constexpr double kYawResidualGate = 0.35;
-constexpr double kMaxYawRate = 8.0;
-constexpr double kMaxYawAcceleration = 20.0;
+constexpr double kYawResidualGate = 0.75;
+constexpr double kMaxYawRate = 15.0;
+constexpr double kMaxYawAcceleration = 60.0;
 constexpr double kMissingMeasurementNoiseScale = 100.0;
-constexpr double kMaxYawCorrection = 0.35;
+constexpr double kMaxYawCorrection = 0.60;
+constexpr double kPositionProcessNoise = 200.0;
+constexpr double kYawProcessNoise = 1000.0;
 
 enum class TrackState { Lost, Detecting, Tracking, TempLost };
 
@@ -225,9 +231,9 @@ void createFilter(TrackerContext& context, const ArmorPose& pose) {
 
     auto processNoise = [&context]() {
         Eigen::MatrixXd noise = Eigen::MatrixXd::Zero(kStateSize, kStateSize);
-        setConstantVelocityNoise(noise, kX, kVx, 2.0, context.dt);
-        setConstantVelocityNoise(noise, kY, kVy, 2.0, context.dt);
-        setConstantVelocityNoise(noise, kYaw, kYawRate, 1.5, context.dt);
+        setConstantVelocityNoise(noise, kX, kVx, kPositionProcessNoise, context.dt);
+        setConstantVelocityNoise(noise, kY, kVy, kPositionProcessNoise, context.dt);
+        setConstantVelocityNoise(noise, kYaw, kYawRate, kYawProcessNoise, context.dt);
         noise(kZEven, kZEven) = 0.01 * context.dt;
         noise(kZOdd, kZOdd) = 0.01 * context.dt;
         noise(kVz, kVz) = 0.05 * context.dt;
@@ -309,17 +315,33 @@ void searchAssignments(const TrackerContext& context,
             continue;
         }
         const ArmorPose& pose = observations[index];
-        // 一个 EKF 只维护一个编号；分类器编号变化时暂不把其他目标喂给当前滤波器。
-        // 让它经过丢失超时后重新初始化，比把另一个目标接到当前轨迹上更稳定。
-        if (pose.detection.target_id != context.target_id) continue;
-        const bool same_id = true;
-        const double max_distance = kMatchDistance;
-        const double max_yaw = kMatchYawDifference;
+        const bool same_id = pose.detection.target_id == context.target_id;
+        const double rotational_speed =
+            std::abs(state[kYawRate]) * radiusOf(state, slot);
+        const double center_speed = std::hypot(state[kVx], state[kVy]);
+        const double predicted_motion =
+            (center_speed + rotational_speed) * std::max(context.dt, 0.001);
+        const double max_distance = std::clamp(
+            kMatchDistance + 1.5 * predicted_motion, 0.20, 0.45);
+        const double max_yaw = std::clamp(
+            kMatchYawDifference + 1.5 * std::abs(state[kYawRate]) *
+                std::max(context.dt, 0.001),
+            1.0, 1.35);
         const Eigen::Vector3d delta = positionOf(pose) - predictedArmorPosition(state, slot);
         const double position_error = delta.norm();
         const double yaw_error = std::abs(wrapAngle(
             pose.armor_yaw - (state[kYaw] + slot * kPi / 2.0)));
-        if (position_error >= max_distance || yaw_error >= max_yaw) continue;
+        // 分类器偶发改号时，只在几何上仍高度一致的情况下沿用当前轨迹。
+        // 这样不会因一帧 ID 错误丢锁，同时仍会拒绝附近的另一辆车。
+        const double accepted_distance = same_id
+            ? max_distance
+            : std::min(max_distance, kIdMismatchDistance + 0.75 * predicted_motion);
+        const double accepted_yaw = same_id
+            ? max_yaw
+            : std::min(max_yaw, kIdMismatchYawDifference +
+                                  0.75 * std::abs(state[kYawRate]) *
+                                      std::max(context.dt, 0.001));
+        if (position_error >= accepted_distance || yaw_error >= accepted_yaw) continue;
 
         Match match;
         match.pose = &pose;
@@ -470,10 +492,14 @@ void updateTrackState(TrackerContext& context, bool matched) {
         context.state = TrackState::Lost;
         context.detect_frames = 0;
     } else if (context.state == TrackState::Tracking) {
-        context.state = TrackState::TempLost;
-        context.lost_frames = 1;
+        ++context.lost_frames;
+        // 短时漏检仍保持 Stable 输出预测值；超过这个窗口才报告 Unstable。
+        if (context.lost_frames > kStablePredictionFrames) {
+            context.state = TrackState::TempLost;
+        }
     } else if (context.state == TrackState::TempLost) {
-        if (++context.lost_frames > kTempLostFrames) {
+        ++context.lost_frames;
+        if (context.lost_frames > kTempLostFrames) {
             context.state = TrackState::Lost;
             context.detect_frames = 0;
         }
@@ -618,7 +644,9 @@ PredictionResult update(const std::vector<ArmorPose>& observations,
             (horizontal_distance * target_velocity.z() - target.z() * radial_velocity) /
             (distance * distance));
     }
-    result.fire_allowed = result.state == TrackingState::Stable && context.target_id != 0;
+    // 纯预测期间可以继续提供平滑瞄准角，但没有新观测时禁止开火。
+    result.fire_allowed = result.state == TrackingState::Stable &&
+                          context.target_id != 0 && context.missed_frames == 0;
     return result;
 }
 
