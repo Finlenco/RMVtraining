@@ -12,9 +12,9 @@ namespace {
 struct SetParam {
     int width = 1440;
     int height =1080;
-    float exp_time = 50000.0F;
-    float gain = 0.0F;
-    float gamma = 1.0F;
+    float exp_time = 7000.0F;
+    float gain = 10.0F;
+    float gamma = 0.0F;
 };
 
 struct MvsCamera {

@@ -36,6 +36,16 @@
 p_reference = R_gimbal_to_reference(yaw,pitch,roll) * (R_camera_to_gimbal * p_camera + t_camera_to_gimbal)
 ```
 
+PnP 解算后，在视频窗口里给解算成功的装甲板画出三维坐标轴：红色是 X 轴，绿色是 Y 轴，蓝色是 Z 轴。坐标轴方向由 `rvec` 决定，原点由 `tvec` 决定，画出的长度是 0.10 m。这里显示的是装甲板坐标系相对相机坐标系的姿态。
+
+视频右上角按装甲板 ID 显示三个向量：
+
+- `tvec`：`solvePnP()` 输出的相机坐标系平移向量，单位 m。
+- `rvec`：`solvePnP()` 输出的 Rodrigues 旋转向量，单位 rad。
+- `p_ref`：相机外参和当前云台姿态变换后的固定参考系位置，单位 m。
+
+为了不改公共的 `ArmorPose` 结构，`rvec` 由 `armor_solver::solve()` 单独传给视频绘制函数；当前帧由 `StudentTasks.cpp::get_pic()` 保存，并在 `armor_solve()` 后叠加坐标轴和向量数值。
+
 ## EKF解算
 底层使用项目提供的通用EKF框架，然后为了适配我另外的代码，写了EkfTracker.cpp 负责：
 \[

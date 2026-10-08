@@ -5,10 +5,22 @@
 #include "EkfTracker.hpp"
 #include "MVS.hpp"
 
+namespace {
+
+cv::Mat current_frame;
+
+}  // namespace
+
 bool get_pic(cv::Mat& pic) {
     // TODO(student)：在这里完成相机的一次性初始化/打开/启动，随后获取一帧并转换为 BGR。
     // 无论成功还是失败，都要释放 SDK 缓冲区
-    return MVS::getframe(pic);
+    const bool captured = MVS::getframe(pic);
+    if (captured && !pic.empty()) {
+        current_frame = pic;
+    } else {
+        current_frame.release();
+    }
+    return captured;
 }
 
 std::vector<ArmorDetection> armor_detect(const cv::Mat& image, TeamColor enemy_color) {
@@ -21,7 +33,12 @@ std::vector<ArmorPose> armor_solve(const std::vector<ArmorDetection>& detections
                                   const CameraParameters& camera, const GimbalState& gimbal) {
     // TODO(student)：按装甲板尺寸建立物点（毫米转换为米），调用 solvePnP，
     // 拒绝深度或重投影误差异常的结果，再应用已标定的刚体变换。
-    return armor_solver::solve(detections, camera, gimbal);
+    std::vector<cv::Vec3d> rotation_vectors;
+    std::vector<ArmorPose> poses =
+        armor_solver::solve(detections, camera, gimbal, &rotation_vectors);
+    armor_solver::displayResults(current_frame, detections, poses,
+                                 rotation_vectors, camera);
+    return poses;
 }
 
 PredictionResult ekf_predict(const std::vector<ArmorPose>& observations, const GimbalState& gimbal,double timestamp_seconds) {

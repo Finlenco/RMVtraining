@@ -12,8 +12,7 @@ namespace armor_detector {
 
 namespace {
 
-constexpr char kDetectionWindow[] = "Armor Detection";
-constexpr double kRedBrightnessThreshold = 120.0;
+constexpr double kRedBrightnessThreshold = 70.0;
 constexpr double kBlueBrightnessThreshold = 90.0;
 
 struct LightBar {
@@ -42,7 +41,7 @@ cv::Mat makeColorMask(const cv::Mat& image, TeamColor enemy_color) {
     const double brightness_threshold = enemy_color == TeamColor::Red
         ? kRedBrightnessThreshold : kBlueBrightnessThreshold;
     cv::threshold(gray, bright_mask, brightness_threshold, 255, cv::THRESH_BINARY);
-    cv::threshold(color_difference, color_mask, 40, 255, cv::THRESH_BINARY);
+    cv::threshold(color_difference, color_mask, 20, 255, cv::THRESH_BINARY);
 
     cv::Mat mask;
     cv::bitwise_and(bright_mask, color_mask, mask);
@@ -159,23 +158,6 @@ std::vector<ArmorDetection> detect(const cv::Mat& image, TeamColor enemy_color) 
             detections.push_back(detection);
         }
     }
-    // 本地单窗口显示检测结果，不再生成 JPEG 或发送 WEB_IMAGE。
-    cv::Mat display = image.clone();
-    for (const ArmorDetection& detection : detections) {
-        for (int corner = 0; corner < 4; ++corner) {
-            cv::line(display, detection.corners[corner],
-                     detection.corners[(corner + 1) % 4],
-                     cv::Scalar(0, 0, 255), 2, cv::LINE_AA);
-        }
-        const cv::Point2f center =
-            (detection.corners[0] + detection.corners[1] +
-             detection.corners[2] + detection.corners[3]) * 0.25F;
-        cv::putText(display, "id=" + std::to_string(detection.target_id),
-                    center, cv::FONT_HERSHEY_SIMPLEX, 0.7,
-                    cv::Scalar(0, 0, 255), 2, cv::LINE_AA);
-    }
-    cv::imshow(kDetectionWindow, display);
-    cv::waitKey(1);
     return detections;
 }
 
