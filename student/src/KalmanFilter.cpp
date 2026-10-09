@@ -51,8 +51,7 @@ constexpr int kResetMissedFrames = 50;
 // 目标装甲板短时不可见时继续沿用原槽位，避免输出瞬间跳到另一块板。
 constexpr int kTargetSlotSwitchFrames = kTempLostFrames;
 
-// 高速旋转参数。Q 的量纲是米/弧度状态对应的加速度方差，已经按本工程
-// 的米制坐标换算；不能直接照搬 aimbot_26 的毫米制数值。
+// 高速旋转参数。Q 的量纲是米/弧度状态对应的加速度方差
 constexpr double kBaseYawSigma = 0.12;
 constexpr double kYawResidualGate = 0.75;
 constexpr double kMaxYawRate = 15.0;
@@ -332,7 +331,7 @@ void searchAssignments(const TrackerContext& context,
         const double yaw_error = std::abs(wrapAngle(
             pose.armor_yaw - (state[kYaw] + slot * kPi / 2.0)));
         // 分类器偶发改号时，只在几何上仍高度一致的情况下沿用当前轨迹。
-        // 这样不会因一帧 ID 错误丢锁，同时仍会拒绝附近的另一辆车。
+
         const double accepted_distance = same_id
             ? max_distance
             : std::min(max_distance, kIdMismatchDistance + 0.75 * predicted_motion);
